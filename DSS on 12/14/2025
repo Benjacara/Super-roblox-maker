@@ -1,0 +1,855 @@
+-- HI! THIS SCRIPT IS FOR THE MAIN DATASTORE HANDLER of my game (which is why its 800+ lines long) made by me, emojis added for more ez visualization of printing thing, discord api's censored for safety, might be some bugs cuz i just want to add stuff for application
+-- A FEW SCRIPTS WERE FIXED BY AI (because of debbuging) alr, being honest here. Also everything is made by BENJACARA2 (me)
+
+local plrs = game.Players
+local area = workspace.levelArea
+local dss = game:GetService("DataStoreService")
+local CurrentDate = os.date("!*t", os.time())
+local lvlStore = dss:GetDataStore("LevelStore")
+local plrStore = dss:GetDataStore("PlrStore")
+local genRand = require(script.Parent.codeGen)
+local repStore = game.ReplicatedStorage
+local remEvents = repStore.RemoteEvents
+local remFunct = repStore.remoteFunctions
+local genLvlAppearence = remEvents.generateLevelAppearence
+local ranGen = Random.new()
+local httpServ = game:GetService("HttpService")
+local url = "[disc censored for safety]"
+local suggestUrl = "[disc censored for safety]"
+local blockID = require(script.findBlockID)
+local executeCode = require(script.Parent.makerHandler.serverCodeModule)
+local srmScripts = require(script.Parent.srmScripts)
+local lvlArea = workspace.levelArea
+local winChar = nil
+local msgSentCooldown = {}
+local lastLoadedPlrId = 0
+local lastLoadedPlrInfo = {}
+-- Group stuff --
+local groupServ = game:GetService("GroupService")
+local group = 35598195
+local groupLink = "https://groups.roblox.com/v1/groups/" .. group
+local btnBuyAmount = script.Parent.cashBtnBuyAmount
+local loadedGroupPlayers = {}
+-- DataStore request saving variables --
+local lastLvlId
+local lastLvlData
+-- locals --
+local validRanks = { -- ranks that are considered "vaid" for admin permissions for the group id specified by code, should only be used to determine admin permissions
+	"Owner",
+	"Admin",
+}
+local scorePer = { -- added score per thing the player has interacted with so player earns more score per interaction for a nice points systems
+	["BenjaCash"] = 1,
+	["BuyButton"] = 20,
+}
+local blockTypes = { -- a list of block types to convert them to IDs to save datastore space
+	[1] = "block",
+	[2] = "buyButton",
+	[3] = "convayor",
+	[4] = "dropper",
+	[5] = "hopper",
+	[6] = "sellPart",
+	[7] = "spawn",
+	[8] = "stair",
+	[9] = "teleporterBox",
+	[10] = "clearDoor",
+	[11] = "swordCrate",
+	[12] = "ZombieSpawnBox",
+	[13] = "lightBlock",
+	[14] = "toggleActor",
+	[15] = "button",
+}
+local validDataTypes = {
+	"plr",
+	"lvl"
+}
+--------------
+
+-- Get Parts Name and position and rotation, and find the parts on the blocks folder, then clone the model of the part, insert it in workspace, set part's settings, get the hitbox and save the links as a readable thing
+local function hideMenuModel ()
+	if workspace:FindFirstChild("menuModel") then
+		workspace:FindFirstChild("menuModel").Parent = game.ReplicatedStorage.menuStorage
+	end
+end
+local function showMenuModel ()
+	if game.ReplicatedStorage.menuStorage:FindFirstChild("menuModel") then
+		game.ReplicatedStorage.menuStorage:FindFirstChild("menuModel").Parent = workspace
+	end
+end
+function sendMessage(message, url)
+	local success, result = pcall(function()
+		return httpServ:PostAsync(
+			url,
+			httpServ:JSONEncode({ content = message }),
+			Enum.HttpContentType.ApplicationJson
+		)
+	end)
+
+	if not success then
+		warn("Failed to send message:", result)
+	else
+		print("Message sent:", result)
+	end
+
+	return success
+	
+end
+local function setData (data,valPos,setVal,setType) -- sets specific data (numbers only unless when setType is invalid or nil) to a number thats any mathematic equation put in setType
+	if not data then return "No data position to set" end
+	if not valPos then return "No data position to set" end
+	if not setVal then return "Nothing to set value to" end
+	local valToSet = script.plrEarningVal
+	valToSet.Value = data[1][valPos]
+	if setType == "+" then
+		valToSet.Value += setVal
+	elseif setType == "-" then
+		valToSet.Value -= setVal
+	elseif setType == "*" then
+		valToSet.Value *= setVal
+	elseif setType == "/" then
+		valToSet.Value /= setVal
+	else
+		valToSet.Value = setVal
+	end
+	data[1][valPos] = valToSet.Value
+	return data
+end
+local function saveData(plrID, lvlName, lvlDescription, lvlTags, lvlType)
+	local lvlName = workspace.levelArea.lvlName.Value
+	local randID = genRand.MakeReturnCode()
+	local objData = {}
+	local linkData = {}
+
+	local function sanitize(str)
+		return typeof(str) == "string" and str or tostring(str)
+	end
+
+	for _, obj in workspace.levelArea:GetChildren() do
+		if obj:IsA("Model") and obj.Name ~= "BlockEffect" then
+			local blockTypeID = obj:GetAttribute("blockTypeID")
+			local uniqueBlockID = obj:GetAttribute("uniqueBlockID")
+
+			if blockTypeID and uniqueBlockID then
+				local success, pivot = pcall(function() return obj:GetPivot() end)
+				if success and pivot then
+					local pos = pivot.Position
+					local x, y, z = pivot:ToEulerAnglesXYZ()
+					table.insert(objData, {
+						i = blockTypeID,
+						d = uniqueBlockID,
+						p = { pos.X, pos.Y, pos.Z },
+						r = { math.deg(x), math.deg(y), math.deg(z)},
+					})
+				else
+					warn("❌ Failed to get pivot for object:", obj.Name)
+				end
+			else
+				warn("❌ Missing attributes for model:", obj.Name)
+			end
+
+			-- ✅ Handle link data
+			local hitBox = obj:FindFirstChild("hitBox")
+			local links = hitBox and hitBox:FindFirstChild("currenctLinks")
+			if links then
+				for _, link in links:GetChildren() do
+					local part1 = link:FindFirstChild("Part1")
+					if part1 and part1.Parent then
+						local targetID = part1.Parent:GetAttribute("uniqueBlockID")
+						if targetID then
+							table.insert(linkData, {
+								[uniqueBlockID] = targetID
+							})
+						end
+					end
+				end
+			end
+		end
+	end
+
+	print("✅ Object Data:", objData)
+	print("✅ Link Data:", linkData)
+
+	-- Convert level data into dictionary
+	local levelData = {
+		[1] = tostring(lvlName),
+		[2] = tostring(lvlDescription),
+		[3] = tostring(lvlTags),
+		[4] = tostring(lvlType),
+		[5] = tostring(plrID),
+		[6] = game.Lighting:FindFirstChildOfClass("Sky"):GetAttribute("mainID") or "0",
+		[7] = 0,
+		[8] = objData,
+		[9] = linkData
+	}
+	print(levelData," THIS IS NEW LEVEL")
+	-- 🔒 Save to DataStore
+	local success, err = pcall(function()
+		lvlStore:SetAsync(randID, levelData)
+	end)
+	
+	if not success then
+		warn("❌ Save failed:", err)
+	end
+	local plrInfo = plrStore:GetAsync(plrID)
+	if plrInfo then
+		local val = 0
+		if plrInfo[1][12] then
+			for i,v in plrInfo[1][12] do
+				val = i
+				if v == "" then
+					print(v)
+					break
+				end
+			end
+			plrInfo[1][12][val] = randID
+		end
+	end
+	print(plrInfo)
+	plrStore:SetAsync(plrID,plrInfo)
+	local success, err = pcall(function()
+		plrStore:SetAsync(plrID,plrInfo)
+	end)
+	if err then
+		warn("save error")
+	end
+end
+local function loadLvlData(plr, data, loadType,lvlId)
+	--if script.Parent.buildAftClear.Value == false then
+		if data[8] then
+			for i, v in data[8] do
+				local blockName = "block"
+				if v["i"] and blockTypes[v["i"]] then
+					blockName = blockTypes[v["i"]]
+				end
+				local template = game.ReplicatedStorage.Blocks:FindFirstChild(blockName)
+				if not template then
+					warn("❌ Could not find template for block name:", blockName)
+					continue --  safer than return, so loop keeps going
+				end
+
+				local newBlock = template:Clone()
+
+				newBlock:SetAttribute("uniqueBlockID", v["d"])
+				newBlock.Name = tostring(v["d"])
+
+				-- 🔧 FIX: Proper positioning using PrimaryPart
+				local part = newBlock:FindFirstChildWhichIsA("BasePart")
+				if part then
+					if not newBlock.PrimaryPart then
+						newBlock.PrimaryPart = part
+					end
+					newBlock:PivotTo(CFrame.new(unpack(v["p"])))
+				else
+					warn("No BasePart inside the block model! Add a Part to:", newBlock.Name)
+				end
+				newBlock.Parent = lvlArea
+				if data[9] then
+					for ii, vv in data[9] do
+						if ii == tostring(i) then
+							local block = workspace.levelArea:FindFirstChild(ii)
+							local linkBlock = workspace.levelArea:FindFirstChild(vv)
+
+							if block and linkBlock then
+								local bHitbox = block:FindFirstChild("hitBox") or block:FindFirstChild("trigger")
+								local lbHitbox = linkBlock:FindFirstChild("hitBox") or linkBlock:FindFirstChild("trigger")
+
+								if bHitbox and lbHitbox then
+									local linkFolder = bHitbox:FindFirstChild("currenctLinks")
+									if not linkFolder then
+										linkFolder = Instance.new("Folder")
+										linkFolder.Name = "currenctLinks"
+										linkFolder.Parent = bHitbox
+									end
+
+									local link = Instance.new("WeldConstraint")
+									link.Part0 = bHitbox
+									link.Part1 = lbHitbox
+									link.Parent = bHitbox
+									block.Name = blockTypes[tonumber(ii)] or block.Name
+								
+								else
+									warn("Missing hitbox/trigger on linked blocks:", ii, "->", vv)
+								end
+							else
+								warn("Missing block or linkBlock in levelArea for IDs:", ii, vv)
+							end
+						end
+					end
+				end
+				newBlock.Name = blockTypes[tonumber(i)] or newBlock.Name
+			end
+		else
+			-- create new data
+		end
+		if data[6] then
+			if game.Lighting:FindFirstChildOfClass("Sky") then
+				game.Lighting:FindFirstChildOfClass("Sky"):Destroy()
+			end
+			wait(0.1)
+			script.Parent.setStyle:Fire(data[6])
+		end
+		executeCode.addScriptsAt(lvlArea, data[4])
+		hideMenuModel()
+		remEvents.moveCamTo:FireClient(game.Players:GetPlayerFromCharacter(plr.Character), plr.Character.Humanoid, plr.Character.Humanoid)
+		remEvents.loadScreen:FireClient(plr, "name", "description", "creator", false, false)
+		
+		script.Parent.setStyle:Fire(data[7])
+		script.Parent.runPartScripts:Fire()
+	--end
+end
+local function generateNewData (plr, randID) -- Generates new player data and returns it to asking code
+	print("SAVE DATA2")
+	local lvlSaveLink = {
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+	}
+	local data = {}
+	if not plrStore:GetAsync(plr.UserId) then
+		table.insert(data, {
+			--  MAIN DATA  --
+			["iId"] = randID, -- ingame id
+			["n"] = plr.Name, -- player name
+			["uI"] = plr.UserId, -- player id
+			["de"] = "Description", -- description
+			--    DATE     --
+			["m"] = CurrentDate.month,
+			["da"] = CurrentDate.day,
+			["y"] = CurrentDate.year,
+			-- OTHER STATS --
+			["lp"] = 0, -- levels played 
+			["lc"] = 0, -- levels cleared
+			["td"] = 0, -- total deaths
+			["gc"] = 0, -- global cash earned
+			-----------------
+			["lSL"] = lvlSaveLink,
+		})
+		local success,failure = pcall(function()
+			plrStore:SetAsync(plr.UserId, data) -- creates a new datastore key based on player data/id, can't be found using the generated ID
+			return data
+		end)
+		print(success or failure)
+	end
+end
+local function loadDataView (plr,data,key) -- loads level frame on client UI, only to be called when SPECIFIC loading is required
+	if data == nil then return end
+	remEvents.generateLevelAppearence:FireClient(plr,data,key)
+end
+local function getNewLvls (plr) -- loops through all available level keys and loads them, only to be used during level uis when the player requests it
+	local keyPages = lvlStore:ListKeysAsync()
+	local keyList = keyPages:GetCurrentPage()
+	for i, key in ipairs(keyList) do
+		local data = lvlStore:GetAsync(key.KeyName)
+		if not data then
+			lvlStore:RemoveAsync(key.KeyName)
+		end
+		print(data)
+		print(key.KeyName)
+		-- Then try loading it if data exists
+		if data then
+			local userId = tonumber(key.KeyName)
+			if userId then
+				loadDataView(game.Players:GetPlayerByUserId(userId), data, key.KeyName)
+			end
+		end
+	end
+end
+local loadedPlrList = {}
+local foundPlrData
+local function getPlrs(plr, specificId)
+
+	-- SINGLE PLAYER LOAD
+	if specificId then
+		if not loadedPlrList[specificId] then
+			local ok, data = pcall(function()
+				return plrStore:GetAsync(specificId)
+			end)
+			if ok and data then
+				loadedPlrList[specificId] = data
+				return data
+			else
+				warn("Failed to load data for", specificId, data)
+				return nil
+			end
+		else
+			return loadedPlrList[specificId]
+		end
+	end
+
+
+	-- BULK LOAD
+	local ok, err = pcall(function()
+		local keyPages = plrStore:ListKeysAsync()
+
+		repeat
+			local page = keyPages:GetCurrentPage()
+
+			print("PAGE SIZE:", #page)
+
+			for _, keyInfo in ipairs(page) do
+				local id = keyInfo.KeyName
+				print("Found key →", id)
+
+				local dataStr = plrStore:GetAsync(id)
+				
+				if dataStr then
+					print("Sending:", id)
+					--[[
+					local data = {
+						["name"] = dataStr[2],
+						["id"] = dataStr[3],
+						
+					}
+					--]]
+					loadedPlrList[id] = dataStr
+					remEvents.sendPlrInfo:FireClient(plr, id, dataStr)--, game.Players:GetPlayerByUserId(id):GetRoleInGroupAsync(group))
+					script.Parent.sendPlrInfoToScripts:Fire(loadedPlrList)
+				else
+					plrStore:RemoveAsync(id)
+				end
+			end
+			
+			task.wait() -- helps throttle paging
+		until keyPages.IsFinished or not keyPages:AdvanceToNextPageAsync()
+
+	end)
+
+	if not ok then
+		warn("Failed to load players for " .. plr.Name .. ": " .. tostring(err))
+	end
+end
+
+local function verifyPlrRole (role) -- verifies the player role, and returns "true" if the player has a valid rank, only to be used when checking for admin permissions
+	for _,validRank in ipairs(validRanks) do
+		if role == validRank then
+			return true
+		else
+			return false
+		end
+	end
+end
+local Players = game:GetService("Players")
+
+local function safeStr(v, fallback)
+	return v ~= nil and tostring(v) or fallback
+end
+
+local function getNameFromUserId(userId)
+	local ok, name = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	return ok and name or ("UserId:" .. tostring(userId))
+end
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+
+local function dump(x)
+	local ok, j = pcall(function() return HttpService:JSONEncode(x) end)
+	return ok and j or tostring(x)
+end
+
+local function deleteLevel(plr, lvlID)
+	-- get level data just to read author id
+	local okLvl, lvlData = pcall(function() return lvlStore:GetAsync(lvlID) end)
+	if not okLvl or type(lvlData) ~= "table" then
+		warn("No lvlData for", lvlID, "err:", lvlData); return
+	end
+	local authorUserId = tonumber(lvlData[5]) or 0
+	if authorUserId == 0 then warn("authorUserId missing"); return end
+	local key = tostring(authorUserId)
+
+	-- atomically remove lvlID from the user's list
+	local okUpd, errUpd = pcall(function()
+		plrStore:UpdateAsync(key, function(old)
+			old = old or {}
+			print("[UpdateAsync BEFORE]", key, dump(old))
+
+			-- find the list and a setter for the same path
+			local list, path = nil, "unknown"
+
+			if type(old.levels) == "table" then
+				list, path = old.levels, "old.levels"
+			elseif type(old["lSL"]) == "table" then
+				list, path = old["lSL"], "old[lSL]"
+			elseif type(old[1]) == "table" and type(old[1][12]) == "table" then
+				list, path = old[1]["lSL"], "old[1][lSL]"  -- <-- your dump matches this
+			end
+
+			if not list then
+				print("[UpdateAsync] No list found for key", key)
+				return old
+			end
+
+			-- remove all occurrences of lvlID (string compare)
+			local removed = false
+			for i = #list, 1, -1 do
+				if tostring(list[i]) == tostring(lvlID) then
+					list[i] = ""
+					removed = true
+				end
+			end
+
+			-- write back to the SAME place we read from
+			if path == "old.levels" then
+				old.levels = list
+			elseif path == "old[lSL]" then
+				old["lSL"] = list
+			elseif path == "old[1][lSL]" then
+				old[1]["lSL"] = list
+			end
+
+			print(string.format("[UpdateAsync] Path used: %s | removed=%s | newLen=%s", path, tostring(removed), tostring(#list)))
+			print("[UpdateAsync AFTER]", key, dump(old))
+			return old
+		end)
+	end)
+	if not okUpd then
+		warn("UpdateAsync failed:", errUpd)
+		return
+	end
+
+	-- readback to verify
+	local okAfter, after = pcall(function() return plrStore:GetAsync(key) end)
+	if okAfter then
+		print("[READBACK]", key, dump(after))
+	else
+		warn("Readback failed:", after)
+	end
+end
+
+
+
+local function deletePlr (id) -- deletes player and checks if the deletion was successful or else it warns an error into the output tab
+	local success, result = pcall(function()
+		plrStore:RemoveAsync(id)
+	end)
+	if not success then
+		warn("Unsuccessful Player deletion")
+	end
+end
+local function createChar (plrID) -- creates a dummy with the player information, to use only when making animations and times where the actual player character would be bad for any actions
+	return plrs:CreateHumanoidModelFromUserIdAsync(plrID)
+end
+local function findPlrByChar (char) -- peforms checks to find the player by its character without risking errors, and returning them back to the code that asked for it
+	local plr
+	if game.Players:GetPlayerFromCharacter(char) then
+		plr = plrs:GetPlayerFromCharacter(char)
+	elseif game.Players:GetPlayerFromCharacter(char.Parent) then
+		plr = plrs:GetPlayerFromCharacter(char.Parent)
+	elseif game.Players:GetPlayerFromCharacter(char.Parent.Parent.Parent) then
+		plr = plrs:GetPlayerFromCharacter(char.Parent.Parent.Parent)
+	end
+	return plr
+end
+----------------------------------------------------------
+remEvents.saveLvl.OnServerEvent:Connect(function(plr, lvlName, lvlDes, lvlTags, lvlStyle) -- handles the client calling for the server to save the specified level
+	saveData(plr.UserId, lvlName, lvlDes, lvlTags, lvlArea.gameStyle.Value)
+	print(lvlName, lvlDes, lvlTags, lvlStyle)
+end)
+plrs.PlayerAdded:Connect(function(plr) -- handles player being added
+	local s,data = pcall(function() -- checks if the player data is valid
+		return plrStore:GetAsync(plr.UserId) -- gets the player data
+	end)
+	if s == false then
+		local ohh = {}
+		print("SAVE STORE")
+		local randID
+		local randID2
+		local randID3
+		local plrCode = genRand.MakeReturnCode()
+		generateNewData(plr, plrCode)
+		return
+	else
+		script.Parent.dataFix:Fire(plr)
+	end
+end)
+remEvents.loadLevelMenu.OnServerEvent:Connect(function(plr, plr2, id2) -- handles loading levels and putting them into the player client as a selectable ui to load levels
+	if id2 == nil then
+		getNewLvls(plr2)
+	else
+		loadDataView(plr2, id2)
+	end
+end)
+remEvents.delLvl.OnServerEvent:Connect(function(plr, lvlID) -- Handles deleting levels
+	local canUseAdmin = verifyPlrRole(plr:GetRoleInGroupAsync(group))
+	print("Can delete?", canUseAdmin)
+	if canUseAdmin then
+		deleteLevel(plr, lvlID)
+	else
+		print("❌ Player is not a valid admin.")
+	end
+end)
+remFunct.fetchPlayerInfo.OnServerInvoke = function(plr) -- fetches player info and returns it to the function which called it
+	local data = plrStore:GetAsync(plr.UserId)
+	if data then
+		print(data)
+		return data
+	end
+end
+remEvents.delPlr.OnServerEvent:Connect(function(plr) -- Handles deleting players
+	local validPlr = game.Players:FindFirstChild(plr.Name) or "err"
+	if validPlr == "err" then
+		return
+	end
+	local canUseAdmin = verifyPlrRole(validPlr:GetRoleInGroupAsync(group))
+	
+	if canUseAdmin then
+		deletePlr(plr.UserId)
+	end
+end)
+remEvents.Play.OnServerEvent:Connect(function(plr,lvlID) -- Handles noticing the load level event when it fires, and if it is an editor mode or not
+	if lvlID == lastLvlId then
+		loadLvlData(plr,lastLvlData,"play")
+		return
+	end
+	local data = lvlStore:GetAsync(tostring(lvlID))
+	if script.Parent.buildAftClear.Value == false then
+		lastLvlData = data
+		lastLvlId = data.KeyName
+		loadLvlData(plr,data,"play")
+	--else
+		--loadLvlData(plr,data,"edit")
+	end
+	plr.Character:PivotTo(workspace:WaitForChild("buildPosPart").CFrame)
+end)
+remEvents.makerModeRun.OnServerEvent:Connect(function()
+	script.Parent.buildAftClear.Value = true
+end)
+script.Parent.clear.Event:Connect(function(char) -- handles clearing an level and setting up new player data
+	local plr = findPlrByChar(char)
+	print(plr)
+	local winDoor = lvlArea:WaitForChild("clearDoor")
+	local winChar = createChar(plr.UserId)
+	local plrCashAmount = plr:WaitForChild("leaderstats"):FindFirstChild("BenjaCash")
+	print(plrCashAmount.Value)
+	local dataToSet = plrStore:GetAsync(plr.UserId)
+	remEvents.loadScores:FireClient(plr,plrCashAmount.Value,btnBuyAmount.Value)
+	local newData = setData(dataToSet,12,plrCashAmount.Value,"+")
+	plrStore:SetAsync(plr.UserId,newData)
+	if game.ReplicatedStorage.menuStorage:FindFirstChild("menuModel") then
+		game.ReplicatedStorage.menuStorage.menuModel.Parent = workspace
+	end
+	wait(0.01)
+	winChar:PivotTo(winDoor.animPosPart.CFrame)
+	winChar.Parent = workspace
+	remEvents.moveCamTo:FireClient(plr,winDoor.camPos1)
+	plr.Character:PivotTo(workspace:WaitForChild("menuModel").spawnBox.SpawnLocation.CFrame)
+	plr.Character.Humanoid.WalkSpeed = 0
+	task.wait(script.Parent.animLoader:Fire(winChar,"137670485475608",2.49))
+	wait(2)
+	remEvents.loadScores.OnServerEvent:Connect(function(plr)
+		script.Parent.animLoader:Fire(winChar,"74212157946442",nil)
+		wait(2)
+		remEvents.loadScreen:FireClient(plr,"","","",true,false)
+		wait(1)
+		remEvents.backToMenu:FireClient(plr)
+		wait(1)
+		remEvents.loadScreen:FireClient(plr,"","","",true,false)
+		winChar:Destroy()
+	end)
+end)
+remFunct.genNewInfo.OnServerInvoke = function (plr) -- when called, generates new data for the player and returns it to asking client
+	local newPlrData = generateNewData(plr, genRand.MakeReturnCode())
+	return newPlrData
+end
+script.Parent.fetchLvlInfo.OnInvoke = function(lvlID) -- fetches level info and returns it to asking server script, requiers the level ID as a string
+	local foundInfo = lvlStore:GetAsync(lvlID)
+	return foundInfo,foundInfo[1]
+end
+remFunct.getLvlInfo.OnServerInvoke = function(player, lvlId) -- like (fetchLvlInfo) but for clients to access and requires (lvlId) to find the level in datastore
+	if typeof(lvlId) ~= "string" or #lvlId == 0 then
+		warn(("getLvlInfo: invalid lvlId from %s"):format(player and player.Name or "nil"))
+		return nil
+	end
+	local ok, data = pcall(function()
+		return lvlStore:GetAsync(lvlId)
+	end)
+	if not ok then
+		warn(("getLvlInfo: GetAsync failed for '%s' (%s)"):format(lvlId, tostring(data)))
+		return nil
+	end
+	return data
+end
+script.Parent.fetchPlrInfo.OnInvoke = function(plrID) -- fetches plr info and returns it to asking server script, requiers the player ID as a string
+	local foundInfo = plrStore:GetAsync(plrID)
+	print("HANDLER NOW",foundInfo)
+	return foundInfo,foundInfo[1]
+end
+local function makeShortenedInfo (id,plrData)
+	local role = "N/A"
+	local playerInstance = plrs:GetPlayerByUserId(id)
+	if playerInstance then
+		role = playerInstance:GetRoleInGroupAsync(group)
+	end
+
+	local thumbUrl = "rbxthumb://type=AvatarHeadShot&id=" .. id .. "&w=150&h=150"
+	local success, result = pcall(function()
+		return plrs:GetUserThumbnailAsync(id, Enum.ThumbnailType.AvatarBust, Enum.ThumbnailSize.Size150x150)
+	end)
+	if success and result then
+		thumbUrl = result
+	end
+
+	-- FINAL RETURN — no nested table, and safe conversion
+	print("plrData raw =", plrData)
+	print("plrData[1] =", plrData[1], typeof(plrData[1]))
+	print("plrData[2] =", plrData[2], typeof(plrData[2]))
+
+	local inner = plrData[1] or {}
+
+	local finalInfo = {
+		tostring(inner[3]), -- userId
+		tostring(inner[2]), -- player name
+		tostring(role),
+		thumbUrl
+	}
+	return finalInfo
+end
+game.ReplicatedStorage.remoteFunctions.getPlayerInfo.OnServerInvoke = function(_, id,wholeInfo)
+	if lastLoadedPlrId == id then
+		if wholeInfo == 1 then
+			return lastLoadedPlrInfo
+		else
+			local shortenedPlrData = makeShortenedInfo(lastLoadedPlrId,lastLoadedPlrInfo)
+		end
+		return lastLoadedPlrInfo
+	end
+	local plrData = plrStore:GetAsync(id) or {"N/A", "N/A"}
+	lastLoadedPlrId = id
+	lastLoadedPlrInfo = plrData
+	-- fetches player info and returns a list of information to asking client, to use only in cases where only specific data is needed, use a fetch player info to retrieve full info on the player
+	if wholeInfo == 1 then
+		return plrData
+	else
+		local shortenedPlrData = makeShortenedInfo(id,plrData)
+	end
+end
+-- THE FIRST LEVEL TOKEN EVER GENERATED HONORS: 309-735-817, NEVER DELETE THIS COMMENT :()
+-- 118806372757174 -- Win dance anim
+-- 121487982981940 -- entering clear door anim
+remFunct.reportFunction.OnServerInvoke = function(plr, reportInfo)
+	print("Server: Received report from", plr.Name)
+	if table.find(msgSentCooldown, plr.UserId) then
+		warn("Report rejected: cooldown active for", plr.Name)
+		return false
+	end
+	-- Add to cooldown *before* continuing
+	table.insert(msgSentCooldown, plr.UserId)
+	-- Remove after cooldown duration (async)
+	task.delay(3, function()
+		local index = table.find(msgSentCooldown, plr.UserId)
+		if index then
+			table.remove(msgSentCooldown, index)
+		end
+	end)
+	print(reportInfo)
+	print(reportInfo[1], reportInfo[2], reportInfo[3])
+	local reportWorked = sendMessage(
+		"New report from player: " .. reportInfo[1] ..
+			", Has reported: " .. reportInfo[2] ..
+			", for: " .. reportInfo[3], url
+	)
+	return reportWorked
+end
+repStore.webhookMsgSend.OnServerEvent:Connect(function(plr,mssg,sentUrl,test)
+	local usedUrl
+	if sentUrl == 1 then
+		usedUrl = suggestUrl
+	end
+	local finalMssg = plr.UserId .. ", has tested the discord webhook with message:  " .. mssg
+	if test == false then
+		local success,err = sendMessage(plr.Name .. " has sent: " .. mssg, usedUrl)
+		if not success then
+			warn("Failed to send message: " .. err)
+		end
+	else
+		local success,err = sendMessage(finalMssg, usedUrl)
+		if not success then
+			warn("Failed to send message: " .. err)
+		end
+	end
+end)
+script.Parent.setData.OnInvoke = function(data,valPos,newVal,setType,dataType,id) -- (data): player data,(valPos): value position in table, (newVal): new value to insert into table, (setType): set (valPos) to (newVal) or to set (valPos) to result of any mathematical equations using (newVal)
+	local newData = setData(data,valPos,newVal,setType)
+	if not validDataTypes[dataType] and id ~= nil then
+		warn("providing id: " .. id .. " with no valid data type, dataType is this: " .. dataType)
+	end
+	if dataType == "plr" then
+		plrStore:SetAsync(id,newData)
+	elseif dataType == "lvl" then
+		lvlStore:SetAsync(id,newData)
+	else
+		print("no data type")
+	end
+end
+local function GetAllRoleUsers(groupId,roleSetId)
+	local allUsers = {}
+	local cursor = nil
+
+	repeat
+		local url = string.format(
+			"https://groups.roblox.com/v1/groups/%d/roles/%d/users",
+			groupId,
+			roleSetId
+		)
+
+		if cursor then
+			url = url .. "?cursor=" .. httpServ:UrlEncode(cursor)
+		end
+
+		local success, groupInfo = pcall(function()
+			return groupServ:GetGroupInfoAsync(group)
+		end)
+
+		if success then
+			-- groupInfo is already a Lua table
+			print("Group Name:", groupInfo.Name)
+			print("Owner:", groupInfo.Owner.Name)
+			local plrs = groupServ:GetGroupInfoAsync(group):GetPlayers()
+			-- Example: if you have a table to store users (group members must be fetched separately)
+			-- Note: GroupService does NOT return all users, only group info
+			-- You would need :GetPlayers() or a separate API to fetch members
+		else
+			warn("Failed to get group info:", groupInfo)
+		end
+	until not cursor
+
+	return allUsers
+end
+remEvents.plrMenuLoadStart.OnServerEvent:Connect(function(plr, roleID)
+	print("Remote fired:", plr.Name, roleID)
+	getPlrs(plr)
+	print("getPlrs finished")
+end)
+remFunct.plrChangeInfo.OnServerInvoke = function(plrId,userId,newInfo)
+	local newPlrInfo = newInfo
+	local s,err = pcall(function()
+		plrStore:UpdateAsync(plrId,newPlrInfo)
+	end)
+	if s == true then
+		print("Success replace", err)
+		return "success"
+	else
+		warn(err)
+	end
+end
+script.Parent.setPlrData.OnInvoke = function(userId,newInfo)
+	local newPlrInfo = newInfo
+	local s,err = pcall(function()
+		plrStore:UpdateAsync(userId,newPlrInfo)
+	end)
+	if s == true then
+		print("Success replace", err)
+		return "success"
+	else
+		warn(err)
+	end
+end
