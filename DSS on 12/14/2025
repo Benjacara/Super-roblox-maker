@@ -1,6 +1,5 @@
 -- HI! THIS SCRIPT IS FOR THE MAIN DATASTORE HANDLER of my game (which is why its 800+ lines long) made by me, emojis added for more ez visualization of printing thing, discord api's censored for safety, might be some bugs cuz i just want to add stuff for application
--- A FEW SCRIPTS WERE FIXED BY AI (because of debbuging) alr, being honest here. Also everything is made by BENJACARA2 (me)
-
+-- sorry i didnt realize i submitted the settings link :( im sorry for putting the wrong link in okay :)
 local plrs = game.Players
 local area = workspace.levelArea
 local dss = game:GetService("DataStoreService")
